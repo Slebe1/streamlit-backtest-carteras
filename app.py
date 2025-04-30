@@ -1,30 +1,55 @@
-from pathlib import Path
-import appdirs as _ad
-CACHE_DIR = "/tmp/py-yfinance"
-_ad.user_cache_dir = lambda *a, **k: CACHE_DIR
-Path(CACHE_DIR).mkdir(exist_ok=True)
 
+
+# --------------------------------------------------------------
+# IMPORTS (parte superior del archivo)
+# --------------------------------------------------------------
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import requests, yfinance as yf       # <─ ya tenías yfinance; añade requests
 
-st.set_page_config(page_title="Back-testing Multi-Cartera", layout="wide")
+# ---- Parche anti-bloqueo de Yahoo ---------------------------------
+_YF_SESSION = requests.Session()
+_YF_SESSION.headers.update(
+    {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0 Safari/537.36"
+        )
+    }
+)
+# -------------------------------------------------------------------
 
-# ──────────── Funciones de negocio ────────────
-@st.cache_data(show_spinner=False)
+# --------------------------------------------------------------
+# FUNCIÓN download_daily_data REEMPLAZADA
+# --------------------------------------------------------------
+@st.cache_data(show_spinner=False, ttl=24 * 60 * 60)  # cache 24 h
 def download_daily_data(tickers, start_date, end_date):
-    data = yf.download(tickers, start=start_date, end=end_date,
-                       interval="1d", progress=False)
+    """
+    Descarga precios diarios de Yahoo Finance.
+    Usa sesión con User-Agent para evitar bloqueos y sin threads paralelos.
+    """
+    data = yf.download(
+        tickers,
+        start=start_date,
+        end=end_date,
+        interval="1d",
+        progress=False,
+        threads=False,       # evita varias conexiones simultáneas
+        session=_YF_SESSION  # usa la sesión con User-Agent “humano”
+    )
+
     if data.empty:
         raise ValueError(
             "No se pudieron descargar precios de Yahoo Finance. "
-            "Ejecuta la app en un entorno con salida a Internet "
-            "o usa datos locales.")
+            "Yahoo devolvió datos vacíos. Intenta de nuevo más tarde."
+        )
+
     col = "Adj Close" if "Adj Close" in data.columns else "Close"
     adj = data[col]
-    if isinstance(adj, pd.Series):
+    if isinstance(adj, pd.Series):   # un solo ticker ⇒ Serie
         adj = adj.to_frame()
     return adj.dropna(how="all")
 
