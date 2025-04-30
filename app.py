@@ -1,62 +1,45 @@
-# --------------------------------------------------------------
+# ==============================================================
 # IMPORTS
-# --------------------------------------------------------------
+# ==============================================================
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import requests, yfinance as yf
+from pandas_datareader import data as web      # <─ Stooq
 
-# --------------------------------------------------------------
-# Parche anti-bloqueo de Yahoo Finance
-#   • User-Agent “humano”
-#   • Usaremos esta sesión en yf.download
-# --------------------------------------------------------------
-_YF_SESSION = requests.Session()
-_YF_SESSION.headers.update(
-    {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0 Safari/537.36"
-        )
-    }
-)
-
-# --------------------------------------------------------------
-# FUNCIÓN ÚNICA download_daily_data  (con parche aplicado)
-# --------------------------------------------------------------
-@st.cache_data(show_spinner=False, ttl=24 * 60 * 60)  # cache 24 h
+# ==============================================================
+# FUNCIÓN ÚNICA DE DESCARGA  (fuente: Stooq)
+# ==============================================================
+@st.cache_data(show_spinner=False, ttl=24 * 60 * 60)   # cache 24 h
 def download_daily_data(tickers, start_date, end_date):
     """
-    Descarga precios diarios de Yahoo Finance con cabecera User-Agent
-    y sin threads paralelos (evita bloqueos).
+    Descarga precios diarios de Stooq (sin restricciones severas).
+    Para acciones/ETFs de EE.UU. se requiere sufijo '.US'.
     """
-    data = yf.download(
-        tickers,
-        start=start_date,
-        end=end_date,
-        interval="1d",
-        progress=False,
-        threads=False,          # ← ¡importante!
-        session=_YF_SESSION     # ← nuestra sesión custom
-    )
+    def stooq_symbol(t):                     # SPY → SPY.US
+        return t if '.' in t else f"{t}.US"
 
-    if data.empty:
-        raise ValueError(
-            "No se pudieron descargar precios de Yahoo Finance. "
-            "Yahoo devolvió datos vacíos. Intenta de nuevo más tarde."
-        )
+    frames = []
+    for t in tickers:
+        try:
+            df = web.DataReader(
+                stooq_symbol(t),
+                "stooq",
+                start=start_date,
+                end=end_date,
+            ).sort_index()                   # fechas ascendentes
+            frames.append(df["Adj Close"].rename(t))
+        except Exception as e:
+            st.warning(f"No se pudo descargar {t}: {e}")
 
-    col = "Adj Close" if "Adj Close" in data.columns else "Close"
-    adj = data[col]
-    if isinstance(adj, pd.Series):      # un solo ticker ⇒ Serie
-        adj = adj.to_frame()
-    return adj.dropna(how="all")
+    if not frames:
+        raise ValueError("Stooq no devolvió datos para ningún ticker.")
 
-# --------------------------------------------------------------
-# Resto de funciones de negocio
-# --------------------------------------------------------------
+    return pd.concat(frames, axis=1)
+
+# ==============================================================
+# RESTO DE FUNCIONES DE NEGOCIO
+# ==============================================================
 def rebalance_portfolio(weights, value, prices):
     w = np.array(weights)
     alloc = value * w
@@ -109,17 +92,17 @@ def perf(series, rf=0.0):
     return {"CAGR": f"{cagr:.2%}", "Return": f"{tot:.2%}",
             "DD": f"{dd:.2%}", "Sharpe": f"{sharpe:.2f}"}
 
-# --------------------------------------------------------------
-# Interfaz Streamlit
-# --------------------------------------------------------------
+# ==============================================================
+# INTERFAZ STREAMLIT
+# ==============================================================
 st.set_page_config(page_title="Back-testing de Carteras", layout="wide")
-st.title("📈 Back-testing de Múltiples Carteras")
+st.title("📈 Back-testing de Múltiples Carteras (Stooq)")
 
 # Parámetros globales
 gl_c1, gl_c2 = st.columns([2, 1])
 with gl_c1:
     n_port = st.number_input("Número de carteras a comparar", 1, 6, 2, step=1)
-    bench = st.text_input("Ticker Benchmark", "^GSPC")
+    bench = st.text_input("Ticker Benchmark", "^GSPC")  # Stooq entiende ^GSPC.US
 with gl_c2:
     y0 = st.number_input("Año inicio", 1980, 2025, 2010)
     y1 = st.number_input("Año fin", y0, 2025, 2024)
@@ -129,8 +112,8 @@ with gl_c2:
 portfolios_cfg = {}
 for idx in range(int(n_port)):
     with st.expander(f"Cartera {idx + 1}", expanded=(idx == 0)):
-        tk = st.text_input("Tickers (coma)", value="SPY,QQQ,TLT", key=f"tk{idx}")
-        wt = st.text_input("Pesos (coma)", value="0.4,0.4,0.2", key=f"wt{idx}")
+        tk = st.text_input("Tickers (coma)", "SPY,QQQ,TLT", key=f"tk{idx}")
+        wt = st.text_input("Pesos (coma)", "0.4,0.4,0.2", key=f"wt{idx}")
         init = st.number_input("Monto inicial", 0, 10_000_000, 10_000,
                                step=1000, key=f"init{idx}")
         mon = st.number_input("Aporte mensual", 0, 1_000_000, 0,
@@ -170,7 +153,7 @@ if st.button("🎬 Ejecutar Back-test"):
     except ValueError as e:
         st.error(str(e)); st.stop()
 
-    if combined.empty():
+    if combined.empty:
         st.error("Sin datos para mostrar."); st.stop()
 
     # Métricas resumen
@@ -187,5 +170,4 @@ if st.button("🎬 Ejecutar Back-test"):
     # Tabla datos crudos
     with st.expander("Datos diarios (últimas filas)"):
         st.dataframe(combined.tail(30))
-
 
