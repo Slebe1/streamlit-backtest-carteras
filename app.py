@@ -1,3 +1,9 @@
+from pathlib import Path
+import appdirs as _ad
+CACHE_DIR = "/tmp/py-yfinance"
+_ad.user_cache_dir = lambda *a, **k: CACHE_DIR
+Path(CACHE_DIR).mkdir(exist_ok=True)
+
 import streamlit as st
 import yfinance as yf
 import pandas as pd
