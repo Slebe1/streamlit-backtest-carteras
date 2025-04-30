@@ -1,15 +1,17 @@
-
-
 # --------------------------------------------------------------
-# IMPORTS (parte superior del archivo)
+# IMPORTS
 # --------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import requests, yfinance as yf       # <─ ya tenías yfinance; añade requests
+import requests, yfinance as yf
 
-# ---- Parche anti-bloqueo de Yahoo ---------------------------------
+# --------------------------------------------------------------
+# Parche anti-bloqueo de Yahoo Finance
+#   • User-Agent “humano”
+#   • Usaremos esta sesión en yf.download
+# --------------------------------------------------------------
 _YF_SESSION = requests.Session()
 _YF_SESSION.headers.update(
     {
@@ -20,16 +22,15 @@ _YF_SESSION.headers.update(
         )
     }
 )
-# -------------------------------------------------------------------
 
 # --------------------------------------------------------------
-# FUNCIÓN download_daily_data REEMPLAZADA
+# FUNCIÓN ÚNICA download_daily_data  (con parche aplicado)
 # --------------------------------------------------------------
 @st.cache_data(show_spinner=False, ttl=24 * 60 * 60)  # cache 24 h
 def download_daily_data(tickers, start_date, end_date):
     """
-    Descarga precios diarios de Yahoo Finance.
-    Usa sesión con User-Agent para evitar bloqueos y sin threads paralelos.
+    Descarga precios diarios de Yahoo Finance con cabecera User-Agent
+    y sin threads paralelos (evita bloqueos).
     """
     data = yf.download(
         tickers,
@@ -37,8 +38,8 @@ def download_daily_data(tickers, start_date, end_date):
         end=end_date,
         interval="1d",
         progress=False,
-        threads=False,       # evita varias conexiones simultáneas
-        session=_YF_SESSION  # usa la sesión con User-Agent “humano”
+        threads=False,          # ← ¡importante!
+        session=_YF_SESSION     # ← nuestra sesión custom
     )
 
     if data.empty:
@@ -49,10 +50,13 @@ def download_daily_data(tickers, start_date, end_date):
 
     col = "Adj Close" if "Adj Close" in data.columns else "Close"
     adj = data[col]
-    if isinstance(adj, pd.Series):   # un solo ticker ⇒ Serie
+    if isinstance(adj, pd.Series):      # un solo ticker ⇒ Serie
         adj = adj.to_frame()
     return adj.dropna(how="all")
 
+# --------------------------------------------------------------
+# Resto de funciones de negocio
+# --------------------------------------------------------------
 def rebalance_portfolio(weights, value, prices):
     w = np.array(weights)
     alloc = value * w
@@ -64,7 +68,7 @@ def portfolio_value_from_shares(shares, prices):
 def backtest_portfolio(tickers, weights, start_year, end_year,
                        initial_amount, monthly, reb, bench):
     start, end = f"{start_year}-01-01", f"{end_year}-12-31"
-    data = download_daily_data(list(tickers)+[bench], start, end)
+    data = download_daily_data(list(tickers) + [bench], start, end)
     bench_px, prices = data[bench], data.drop(columns=[bench])
 
     pv, bv, shares = initial_amount, initial_amount, None
@@ -82,33 +86,37 @@ def backtest_portfolio(tickers, weights, start_year, end_year,
                 shares = rebalance_portfolio(weights, pv, prices.loc[d])
 
         if i:
-            br = bench_px.loc[d] / bench_px.iloc[i-1] - 1
+            br = bench_px.loc[d] / bench_px.iloc[i - 1] - 1
             bv = bv * (1 + br) + (monthly if d.month != pm else 0)
 
-        p_vals.append(pv); b_vals.append(bv)
+        p_vals.append(pv)
+        b_vals.append(bv)
         pm, py = d.month, d.year
 
     return pd.DataFrame({"Portfolio": p_vals, "Benchmark": b_vals}, index=prices.index)
 
 def perf(series, rf=0.0):
     if series.empty:
-        return {"CAGR":"–", "Return":"–", "DD":"–", "Sharpe":"–"}
+        return {"CAGR": "–", "Return": "–", "DD": "–", "Sharpe": "–"}
     init, fin = series.iloc[0], series.iloc[-1]
     tot = fin / init - 1
     yrs = (series.index[-1] - series.index[0]).days / 365.25
-    cagr = (1 + tot) ** (1/yrs) - 1 if yrs else np.nan
+    cagr = (1 + tot) ** (1 / yrs) - 1 if yrs else np.nan
     dd = (series / series.cummax() - 1).min()
     daily = series.pct_change().dropna()
-    ex = daily - (((1 + rf) ** (1/252)) - 1)
+    ex = daily - (((1 + rf) ** (1 / 252)) - 1)
     sharpe = np.sqrt(252) * ex.mean() / ex.std() if ex.std() else np.nan
     return {"CAGR": f"{cagr:.2%}", "Return": f"{tot:.2%}",
             "DD": f"{dd:.2%}", "Sharpe": f"{sharpe:.2f}"}
 
-# ──────────── Interfaz ────────────
+# --------------------------------------------------------------
+# Interfaz Streamlit
+# --------------------------------------------------------------
+st.set_page_config(page_title="Back-testing de Carteras", layout="wide")
 st.title("📈 Back-testing de Múltiples Carteras")
 
 # Parámetros globales
-gl_c1, gl_c2 = st.columns([2,1])
+gl_c1, gl_c2 = st.columns([2, 1])
 with gl_c1:
     n_port = st.number_input("Número de carteras a comparar", 1, 6, 2, step=1)
     bench = st.text_input("Ticker Benchmark", "^GSPC")
@@ -120,7 +128,7 @@ with gl_c2:
 # Controles por cartera
 portfolios_cfg = {}
 for idx in range(int(n_port)):
-    with st.expander(f"Cartera {idx+1}", expanded=(idx==0)):
+    with st.expander(f"Cartera {idx + 1}", expanded=(idx == 0)):
         tk = st.text_input("Tickers (coma)", value="SPY,QQQ,TLT", key=f"tk{idx}")
         wt = st.text_input("Pesos (coma)", value="0.4,0.4,0.2", key=f"wt{idx}")
         init = st.number_input("Monto inicial", 0, 10_000_000, 10_000,
@@ -129,7 +137,7 @@ for idx in range(int(n_port)):
                               step=100, key=f"mon{idx}")
         reb = st.selectbox("Rebalanceo", ["none", "annual", "monthly"],
                            index=1, key=f"reb{idx}")
-        portfolios_cfg[f"Cartera_{idx+1}"] = {
+        portfolios_cfg[f"Cartera_{idx + 1}"] = {
             "tickers": [t.strip().upper() for t in tk.split(",") if t.strip()],
             "weights": [float(w) for w in wt.split(",") if w.strip()],
             "initial_amount": init,
@@ -139,16 +147,13 @@ for idx in range(int(n_port)):
 
 # Botón principal
 if st.button("🎬 Ejecutar Back-test"):
-    # Validaciones rápidas
+    # Validaciones
     for name, cfg in portfolios_cfg.items():
         if len(cfg["tickers"]) != len(cfg["weights"]):
-            st.error(f"{name}: número de tickers ≠ número de pesos.")
-            st.stop()
+            st.error(f"{name}: número de tickers ≠ número de pesos."); st.stop()
         if abs(sum(cfg["weights"]) - 1.0) > 1e-6:
-            st.error(f"{name}: los pesos no suman 1.0.")
-            st.stop()
+            st.error(f"{name}: los pesos no suman 1.0."); st.stop()
 
-    # Back-tests
     combined = pd.DataFrame()
     metrics = {}
     try:
@@ -165,16 +170,14 @@ if st.button("🎬 Ejecutar Back-test"):
     except ValueError as e:
         st.error(str(e)); st.stop()
 
-    if combined.empty:
-        st.error("Sin datos que mostrar."); st.stop()
+    if combined.empty():
+        st.error("Sin datos para mostrar."); st.stop()
 
     # Métricas resumen
     st.subheader("Resumen")
-    st.write(
-        pd.DataFrame(metrics).T.rename(columns={
-            "CAGR":"CAGR", "Return":"Retorno", "DD":"Máx DD", "Sharpe":"Sharpe"
-        })
-    )
+    st.write(pd.DataFrame(metrics).T.rename(columns={
+        "CAGR": "CAGR", "Return": "Retorno", "DD": "Máx DD", "Sharpe": "Sharpe"
+    }))
 
     # Gráfico evolutivo
     st.subheader("Evolución")
@@ -184,4 +187,5 @@ if st.button("🎬 Ejecutar Back-test"):
     # Tabla datos crudos
     with st.expander("Datos diarios (últimas filas)"):
         st.dataframe(combined.tail(30))
+
 
