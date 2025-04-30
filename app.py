@@ -1,11 +1,3 @@
-# app.py — versión multi-cartera para Streamlit
-from pathlib import Path
-import appdirs as ad          # <-- se instala solo: viene con yfinance
-# Forzamos la caché a /tmp
-CACHE_DIR = "/tmp/py-yfinance"
-ad.user_cache_dir = lambda *args, **kwargs: CACHE_DIR
-Path(CACHE_DIR).mkdir(exist_ok=True)
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
