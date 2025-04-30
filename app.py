@@ -1,27 +1,20 @@
-# app.py — versión multi-cartera para Streamlit
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.express as px
 
-st.set_page_config(page_title="Back-testing Multi-Cartera", layout="wide")
+st.set_page_config(page_title="Backtest de Carteras", layout="wide")
 
-# ──────────── Funciones de negocio ────────────
+# ------------- Funciones de negocio originales ----------------
 @st.cache_data(show_spinner=False)
 def download_daily_data(tickers, start_date, end_date):
-    data = yf.download(tickers, start=start_date, end=end_date,
-                       interval="1d", progress=False)
-    if data.empty:
-        raise ValueError(
-            "No se pudieron descargar precios de Yahoo Finance. "
-            "Ejecuta la app en un entorno con salida a Internet "
-            "o usa datos locales.")
+    data = yf.download(tickers, start=start_date, end=end_date, interval="1d", progress=False)
     col = "Adj Close" if "Adj Close" in data.columns else "Close"
-    adj = data[col]
-    if isinstance(adj, pd.Series):
-        adj = adj.to_frame()
-    return adj.dropna(how="all")
+    adj_close = data[col]
+    if isinstance(adj_close, pd.Series):
+        adj_close = adj_close.to_frame()
+    return adj_close.dropna(how="all")
 
 def rebalance_portfolio(weights, value, prices):
     w = np.array(weights)
