@@ -1,5 +1,5 @@
 streamlit
-yfinance==0.2.28
 pandas
 numpy
 plotly
+pandas-datareader  
